@@ -1,9 +1,7 @@
 const sqlite3 = require('sqlite3').verbose();
 const co = require('co');
 const net = require('net');
-
-//const file = "/tmp/node-memcache.db";
-//const db = new sqlite3.Database(file);
+const fs = require('fs');
 
 
 /** This class implements the base class for a waitable condition
@@ -207,6 +205,11 @@ class Connection
     return { buffer: buffer.slice(cmd_match[0].length + bytes), request: req };
   }
 
+  hasKey(key)
+  {
+
+  }
+
   *handleRequest(req)
   {
     switch (req.type)
@@ -316,6 +319,8 @@ class SQLCache
   {
     this.db = new sqlite3.Database("/opt/memcache-data/files.db");
     console.log(this.db);
+    this.cleans = 1;
+    this.runningclean = false;
   }
 
   init()
@@ -324,6 +329,9 @@ class SQLCache
     {
       yield runSQLiteCmd(cb => this.db.all("CREATE TABLE IF NOT EXISTS cache(key VARCHAR, flags INTEGER, data BLOB, len INTEGER, lastuse INTEGER)", cb));
       yield runSQLiteCmd(cb => this.db.all("CREATE INDEX IF NOT EXISTS cacheindex ON cache(key)", cb));
+
+      setInterval(() => this.cleanup(), 1000);
+      return "ok";
     }.bind(this));
   }
 
@@ -331,7 +339,9 @@ class SQLCache
   {
     return co(function*()
     {
+      console.log(" sql get ", key);
       let res = yield new Promise(resolve => this.db.all("SELECT * FROM cache WHERE key = ?", [ key ], (err, rows) => resolve({ err, rows })));
+      console.log(" sql got ", key, !!res.rows.length);
       if (!res.rows.length)
         return null;
       // schedule an async update of the lastuse date
@@ -346,12 +356,14 @@ class SQLCache
 
   set(key, value)
   {
-    console.log("store ", key);
+    console.log(" sql store ", key);
     return co(function*()
     {
       // delete old key
       yield new Promise(resolve => this.db.run("DELETE FROM cache WHERE key = ?", [ key ], resolve));
       yield new Promise(resolve => this.db.run("INSERT INTO cache(key, flags, data, len, lastuse) VALUES (?,?,?,?,?)", [ key, value.flags, value.data, value.data.length, Date.now() ], resolve));
+      console.log(" sql stored ", key);
+      this.cleans = 2;
       return true;
     }.bind(this));
   }
@@ -367,18 +379,26 @@ class SQLCache
 
   cleanup()
   {
+    if (!this.cleans || this.runningclean)
+      return;
+
+    --this.cleans;
+    this.runningclean = true;
+
     return co(function*()
     {
       let res = yield new Promise(resolve => this.db.all("SELECT key, len FROM cache ORDER BY lastuse DESC", [], (err, rows) => resolve({ err, rows })));
       if (!res.rows.length)
       {
-        // console.log(`empty table at cleanup`);
+        console.log(`empty table at cleanup`);
+        this.runningclean = false;
         return;
       }
 
-      let maxlen = 3 * 1000 * 1000 * 1000; // about 3 GB
+      let maxlen = 10 * 1000 * 1000 * 1000; // about 10 GB
       let totallen = 0;
       let removed = 0;
+      let items = res.rows.length;
       for (let row of res.rows)
       {
         totallen += row.len;
@@ -386,18 +406,60 @@ class SQLCache
         {
           yield new Promise(resolve => this.db.all("SELECT key FROM cache WHERE key = ?", [ row.key ], _ => _));
           removed += res.len;
+          --items;
         }
       }
       if (removed)
         console.log(`removed ${removed} of ${totallen}`);
+      this.runningclean = false;
+      fs.writeFileSync("/opt/memcache-data/stats.txt", `${items} ${totallen-removed}`);
     }.bind(this));
   }
 }
 
-let cache = new SQLCache;
-setInterval(() => cache.cleanup(), 1000);
+class AsyncStoreWrapper
+{
+  constructor(wrapped)
+  {
+    this.wrapped = wrapped;
+    this.cache = {};
+  }
 
-console.log("initializing!");
+  init()
+  {
+    return this.wrapped.init();
+  }
+
+  get(key)
+  {
+    if (this.cache[key])
+      return this.cache[key];
+    return this.wrapped.get(key);
+  }
+
+  set(key, value)
+  {
+    this.cache[key] = value;
+    co(function*()
+    {
+      yield this.wrapped.set(key, value);
+      delete this.cache[key];
+    }.bind(this));
+    return true;
+  }
+
+  has_key(key)
+  {
+    if (this.cache[key])
+      return true;
+    return this.wrapped.has_key(key);
+  }
+}
+
+
+let cache = new AsyncStoreWrapper(new SQLCache);
+
+console.log("initializing...");
 Promise.resolve(cache.init()).then(x =>
 {
   console.log("initresult", x);
@@ -407,43 +469,12 @@ Promise.resolve(cache.init()).then(x =>
 }).catch(err => { console.log(err); process.exit(); });
 
 process.on('SIGINT', function() {
-    console.log("Caught interrupt signal");
+    console.log("Caught INT signal");
     process.exit();
 });
 
-/*
-console.log("schedule run");
-db.run("SELECT name FROM sqlite_master WHERE type='table' AND name='ENTRIES'", x =>
-{
-  console.log("results", x);
+process.on('SIGTERM', function() {
+    console.log("Caught TERM signal");
+    process.exit();
 });
-console.log("scheduled run");
-
-
-//db.run("CREATE TABLE cache (key TEXT, )");
-
-/*
-
-class Cache
-{
-  get(key):
-  {
-
-  }
-
-  set(key, value)
-  {
-
-  }
-}
-
-
-const server = mc.server();
-
-server.listen(11200, function()
-{
-  console.log('ready for connections from memcache clients');
-});
-*/
-
 
