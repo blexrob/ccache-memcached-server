@@ -555,6 +555,15 @@ let server;
 let cache = new AsyncStoreWrapper(new SQLCache);
 
 console.log("initializing... (test2)");
+try
+{
+  fs.mkdirSync("/opt/memcache-data");
+}
+catch(ignore)
+{
+  //just ensuring the directory is there
+}
+
 Promise.resolve(cache.init()).then(x =>
 {
   console.log("initresult", x);
@@ -582,4 +591,3 @@ process.on('SIGTERM', () => co(function*() {
     console.log("Done, exiting process");
     process.exit();
 }));
-
