@@ -15,3 +15,4 @@ COPY package.json yarn.lock /opt/server/
 RUN cd /opt/server && yarn install && yarn cache clean
 
 COPY src/*.js /opt/server/
+VOLUME /opt/memcache-data

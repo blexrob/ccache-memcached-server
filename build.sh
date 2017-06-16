@@ -1,4 +1,4 @@
 #!/bin/sh
 cd ${BASH_SOURCE%/*}
-source ../src/functions.sh
-runstandardbuild "$@" ci-memcached
+docker build -t webhare/ccache-memcached-server:latest .
+docker push webhare/ccache-memcached-server:latest
