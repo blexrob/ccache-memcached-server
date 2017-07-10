@@ -445,7 +445,7 @@ class SQLCache
       for (let row of res.rows)
       {
         totallen += row.len;
-        if (totallen > maxlen && !lru)
+        if (totallen > maxlen && !lastuse)
           lastuse = row.lastuse;
         if (lastuse)
         {
