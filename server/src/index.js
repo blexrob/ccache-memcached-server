@@ -501,6 +501,214 @@ Retrieved: ${(this._retrieved / 1024 / 1024).toFixed(1)} MB
   }
 }
 
+class FileDB extends Cache
+{
+  constructor()
+  {
+    super();
+
+    this.cleans = 1;
+    this.runningclean = false;
+  }
+
+  async init()
+  {
+    try
+    {
+      try
+      {
+        fs.mkdirSync("/opt/memcache-data/files/");
+      }
+      catch (e)
+      {
+      }
+      const db_file = fs.readFileSync("/opt/memcache-data/filedb.json");
+      const db = JSON.parse(db_file);
+      if (!Array.isArray(db))
+        throw new Error("JSON file has wrong type");
+      this.db = new Map(db);
+    }
+    catch (e)
+    {
+      console.log(`error reading file index: ${e}`);
+      this.db = new Map;
+    }
+
+    try
+    {
+      await this._cleanup(true);
+      setInterval(() => this._cleanup(), 1000);
+    }
+    catch (e)
+    {
+      console.log(e);
+    }
+
+    // fixme: delete non-refd data files, old sqldb files
+    return "ok";
+  }
+
+  async get(key)
+  {
+    let lookup = this.db.get(key);
+    if (!lookup)
+    {
+      ++this._misses;
+      return null;
+    }
+
+    try
+    {
+      let data = await new Promise((resolve, reject) => fs.readFile(lookup.datapath, (err, data) => err ? reject(new Error(err)) : resolve(data)));
+
+      ++this._hits;
+      this._retrieved += data.length;
+      lookup.lastuse = Date.now();
+      return { flags: lookup.flags, data };
+    }
+    catch (e)
+    {
+      return null;
+    }
+  }
+
+  async set(key, { flags, data })
+  {
+    let olddatapath;
+    let lookup = this.db.get(key);
+    if (lookup)
+      olddatapath = lookup.datapath;
+
+    // Create a file with a new url
+    let filename = ("0000000000" + Math.random().toString(36)).slice(-10) + ("0000000000" + Math.random().toString(36)).slice(-10);
+    let datapath = "/opt/memcache-data/files/" + filename;
+    await new Promise((resolve, reject) => fs.writeFile(datapath, data, err => err ? reject(new Error(err)) : resolve()));
+
+    // Set the key after the file has been written
+    this.db.set(key, { flags, datapath, lastuse: Date.now(), len: data.length });
+
+    // don't wait for removal to finish, ignore error
+    if (olddatapath)
+      fs.unlink(olddatapath, err => err);
+
+    return true;
+  }
+
+  async hasKey(key)
+  {
+    return !!this.db.get(key);
+  }
+
+  getStats()
+  {
+    return { hits: this._hits, misses: this._misses, retrieved: this._retrieved };
+  }
+
+  async _saveDBFile()
+  {
+    await new Promise((resolve, reject) => fs.writeFile("/opt/memcache-data/filedb.json.tmp", JSON.stringify(Array.from(this.db)), err => err ? reject(new Error(err)) : resolve()));
+    await new Promise((resolve, reject) => fs.rename("/opt/memcache-data/filedb.json.tmp", "/opt/memcache-data/filedb.json", err => err ? reject(new Error(err)) : resolve()));
+  }
+
+  async _cleanup(firstrun)
+  {
+    if (!this.cleans || this.runningclean)
+    {
+      if (!this.runningclean)
+      {
+        this.runningclean = true;
+        await this._writeStats();
+        this.runningclean = false;
+      }
+      return;
+    }
+
+    --this.cleans;
+    this.runningclean = true;
+
+    let start = Date.now();
+
+    // Atomic update the DB
+    await this._saveDBFile();
+
+    console.log(`running cleanup query`);
+    let lru_sorted = Array.from(this.db).sort((a,b) => a[1].lru > b[1].lru);
+    if (!lru_sorted.length && !firstrun)
+    {
+      console.log(`empty table at cleanup in ${Date.now()-start}ms`);
+      this.runningclean = false;
+      this.lastelts = 0;
+      this.lastsize = 0;
+      return;
+    }
+
+    let maxlen = 10 * 1000 * 1000 * 1000; // about 10 GB
+    let totallen = 0;
+    let removelen = 0;
+    let removecount = 0;
+    let lastuse = null;
+    for (let row of lru_sorted)
+    {
+      totallen += row.len;
+      if (totallen > maxlen && !lastuse)
+        lastuse = row.lastuse;
+      if (lastuse)
+      {
+        removelen += row.len;
+        ++removecount;
+      }
+    }
+
+    if (lastuse || firstrun)
+    {
+      let filenames = await new Promise((resolve, reject) => fs.readdir("/opt/memcache-data/files/", (err, files) => err ? reject(new Error(err)) : resolve(files)));
+      let deletepaths = new Set(filenames.map(filename => "/opt/memcache-data/files/" + filename));
+
+      console.log(`Going to remove ${removecount} items with ${removelen} bytes, query was ${Date.now()-start}ms`);
+      for (let [ key, value ] of this.db)
+      {
+        if (value.lru < lastuse)
+          this.db.delete(key);
+        else
+          deletepaths.delete(value.datapath);
+      }
+
+      for (let datapath of deletepaths)
+        fs.unlink(datapath, err => err);
+
+      console.log(`done in ${Date.now()-start}ms`);
+    }
+    else
+      console.log(`nothing removed in ${Date.now()-start}ms`);
+
+    this.runningclean = false;
+    this.lastelts = lru_sorted.length - removecount;
+    this.lastsize = totallen - removelen;
+
+    await this._writeStats();
+  }
+
+  async _writeStats()
+  {
+    let stats = this.getStats();
+    await new Promise((resolve, reject) => fs.writeFile("/opt/memcache-data/stats.txt.tmp",
+      `FileDB memcached stats:
+
+Items: ${this.lastelts}
+Size: ${(this.lastsize / 1024 / 1024).toFixed(1)} MB
+Hits: ${stats.hits}
+Misses: ${stats.misses}
+Retrieved: ${(stats.retrieved / 1024 / 1024).toFixed(1)} MB
+`, err => err ? reject(new Error(err)) : resolve()));
+    await new Promise((resolve, reject) => fs.rename("/opt/memcache-data/stats.txt.tmp", "/opt/memcache-data/stats.txt", err => err ? reject(new Error(err)) : resolve()));
+  }
+
+  async close()
+  {
+    await this._saveDBFile();
+  }
+}
+
 /** This cache wrapper accepts writes immediately, and delay-writes them to the wrapped
     cache
 */
@@ -563,7 +771,7 @@ class AsyncStoreWrapper extends Cache
 
 
 let server;
-let cache = new AsyncStoreWrapper(new SQLCache);
+let cache = new AsyncStoreWrapper(new FileDB);
 
 console.log("initializing... (test2)");
 try
