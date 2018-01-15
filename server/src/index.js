@@ -335,6 +335,9 @@ class SQLCache
     return co(function*()
     {
       let start = Date.now();
+
+      // Run in WAL mode
+      yield runSQLiteCmd(cb => this.db.run("PRAGMA journal_mode = WAL", cb));
       // drop old caches
       yield runSQLiteCmd(cb => this.db.run("DROP INDEX IF EXISTS datacacheindex", cb));
       yield runSQLiteCmd(cb => this.db.run("DROP TABLE IF EXISTS cache", cb));
