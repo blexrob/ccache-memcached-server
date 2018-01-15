@@ -1,3 +1,3 @@
 #!/bin/sh
 cd ${BASH_SOURCE%/*}
-docker build --squash -t webhare/ccache-memcached-server:latest server
+docker build -t webhare/ccache-memcached-server:latest server
