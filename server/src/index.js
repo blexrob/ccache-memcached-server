@@ -230,7 +230,7 @@ class Connection
   {
     if (req.type !== "set")
     {
-      let has_key = yield Promise.resolve(this.cache.has_key(req.key));
+      let has_key = yield Promise.resolve(this.cache.hasKey(req.key));
       if ((req.type === "add") === has_key)
       {
         if (!req.noreply)
@@ -274,17 +274,26 @@ class Connection
   }
 }
 
-/*
 class Cache
 {
   constructor()
   {
     this.data = {};
+
+    this._hits = 0;
+    this._misses = 0;
+    this._retrieved = 0;
   }
 
   init()
   {
   }
+
+  getStats()
+  {
+    return { hits: this._hits, misses: this._misses, retrieved: this._retrieved };
+  }
+
 
   get(key)
   {
@@ -296,11 +305,11 @@ class Cache
     this.data[key] = value;
   }
 
-  has_key(key)
+  hasKey(key)
   {
     return this.data.hasOwnProperty(key);
   }
-}*/
+}
 
 function runSQLiteCmd(call)
 {
@@ -313,14 +322,11 @@ function runSQLiteCmd(call)
   }));
 }
 
-class SQLCache
+class SQLCache extends Cache
 {
   constructor()
   {
-    this.hits = 0;
-    this.misses = 0;
-    this.retrieved = 0;
-
+    super();
     this.db = new sqlite3.Database("/opt/memcache-data/files.db");
     console.log(this.db);
     this.cleans = 1;
@@ -356,7 +362,7 @@ class SQLCache
 
   getStats()
   {
-    return { hits: this.hits, misses: this.misses, retrieved: this.retrieved };
+    return { hits: this._hits, misses: this._misses, retrieved: this._retrieved };
   }
 
   get(key)
@@ -368,7 +374,7 @@ class SQLCache
       let res = yield new Promise(resolve => this.db.all("SELECT * FROM datacache WHERE key = ?", [ key ], (err, rows) => resolve({ err, rows })));
       if (!res.rows.length)
       {
-        ++this.misses;
+        ++this._misses;
         console.log(` sql not found ${key} in ${Date.now()-start}ms`);
         return null;
       }
@@ -377,11 +383,11 @@ class SQLCache
       if (res.rows[0].data.length != res.rows[0].len)
       {
         console.error("length failure", res.rows[0].data.length, res.rows[0].len);
-        ++this.misses;
+        ++this._misses;
         return null;
       }
-      ++this.hits;
-      this.retrieved += res.rows[0].len;
+      ++this._hits;
+      this._retrieved += res.rows[0].len;
       console.log(` sql found ${key} in ${Date.now()-start}ms`);
       return { flags: res.rows[0].flags, data: res.rows[0].data };
     }.bind(this));
@@ -405,7 +411,7 @@ class SQLCache
     }.bind(this));
   }
 
-  has_key(key)
+  hasKey(key)
   {
     return co(function*()
     {
@@ -485,7 +491,7 @@ Items: ${this.lastelts}
 Size: ${(this.lastsize / 1024 / 1024).toFixed(1)} MB
 Hits: ${stats.hits}
 Misses: ${stats.misses}
-Retrieved: ${(this.retrieved / 1024 / 1024).toFixed(1)} MB
+Retrieved: ${(this._retrieved / 1024 / 1024).toFixed(1)} MB
 `);
   }
 
@@ -495,14 +501,16 @@ Retrieved: ${(this.retrieved / 1024 / 1024).toFixed(1)} MB
   }
 }
 
-class AsyncStoreWrapper
+/** This cache wrapper accepts writes immediately, and delay-writes them to the wrapped
+    cache
+*/
+class AsyncStoreWrapper extends Cache
 {
   constructor(wrapped)
   {
+    super();
     this.wrapped = wrapped;
     this.cache = {};
-    this.hits = 0;
-    this.retrieved = 0;
   }
 
   init()
@@ -513,8 +521,8 @@ class AsyncStoreWrapper
   getStats()
   {
     let stats = this.wrapped.getStats();
-    stats.hits += this.hits;
-    stats.retrieved += this.retrieved;
+    stats.hits += this._hits;
+    stats.retrieved += this._retrieved;
     return stats;
   }
 
@@ -522,8 +530,8 @@ class AsyncStoreWrapper
   {
     if (this.cache[key])
     {
-      ++this.hits;
-      this.retrieved += this.cache[key].data.len;
+      ++this._hits;
+      this._retrieved += this.cache[key].data.len;
       return this.cache[key];
     }
     return this.wrapped.get(key);
@@ -540,11 +548,11 @@ class AsyncStoreWrapper
     return true;
   }
 
-  has_key(key)
+  hasKey(key)
   {
     if (this.cache[key])
       return true;
-    return this.wrapped.has_key(key);
+    return this.wrapped.hasKey(key);
   }
 
   close()
