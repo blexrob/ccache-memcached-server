@@ -354,7 +354,7 @@ class SQLCache extends Cache
       yield runSQLiteCmd(cb => this.db.run("CREATE TABLE IF NOT EXISTS lrucache(key VARCHAR, len INTEGER, lastuse INTEGER)", cb));
       yield runSQLiteCmd(cb => this.db.run("CREATE INDEX IF NOT EXISTS lrucacheindex ON lrucache(key)", cb));
 
-      setInterval(() => this._cleanup(), 1000);
+      setInterval(() => this._cleanup(), 60*1000);
       console.log(`init in ${Date.now()-start}ms`);
       return "ok";
     }.bind(this));
@@ -537,7 +537,7 @@ class FileDB extends Cache
     try
     {
       await this._cleanup(true);
-      setInterval(() => this._cleanup(), 1000);
+      setInterval(() => this._cleanup(), 60*1000);
     }
     catch (e)
     {
