@@ -591,6 +591,8 @@ class FileDB extends Cache
     if (olddatapath)
       fs.unlink(olddatapath, err => err);
 
+    this.cleans = 1;
+
     return true;
   }
 
