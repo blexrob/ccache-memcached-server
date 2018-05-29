@@ -634,7 +634,7 @@ class FileDB extends Cache
     await this._saveDBFile();
 
     console.log(`running cleanup query`);
-    let lru_sorted = Array.from(this.db).sort((a,b) => a[1].lru > b[1].lru);
+    let lru_sorted = Array.from(this.db).sort((a,b) => b[1].lastuse - a[1].lastuse);
     if (!lru_sorted.length && !firstrun)
     {
       console.log(`empty table at cleanup in ${Date.now()-start}ms`);
@@ -651,12 +651,12 @@ class FileDB extends Cache
     let lastuse = null;
     for (let row of lru_sorted)
     {
-      totallen += row.len;
+      totallen += row[1].len;
       if (totallen > maxlen && !lastuse)
-        lastuse = row.lastuse;
+        lastuse = row[1].lastuse;
       if (lastuse)
       {
-        removelen += row.len;
+        removelen += row[1].len;
         ++removecount;
       }
     }
@@ -669,7 +669,7 @@ class FileDB extends Cache
       console.log(`Going to remove ${removecount} items with ${removelen} bytes, query was ${Date.now()-start}ms`);
       for (let [ key, value ] of this.db)
       {
-        if (value.lru < lastuse)
+        if (value.lastuse <= lastuse)
           this.db.delete(key);
         else
           deletepaths.delete(value.datapath);
