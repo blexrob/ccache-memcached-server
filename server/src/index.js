@@ -775,7 +775,7 @@ class AsyncStoreWrapper extends Cache
 let server;
 let cache = new AsyncStoreWrapper(new FileDB);
 
-console.log("initializing... (test2)");
+console.log("initializing...");
 try
 {
   fs.mkdirSync("/opt/memcache-data");
