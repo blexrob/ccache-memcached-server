@@ -1,3 +1,12 @@
+# PLEASE NOTE
+*THIS PROJECT MAY NOW BE OBSOLETE*
+
+docker's experimental buildkit seems to suffice with an unpatched ccache:
+
+```
+RUN --mount=type=cache,target=/tmp/ccache CCACHE_DIR=/tmp/ccache make
+```
+
 # ccache-memcached-server
 A docker container hosting a ccache over the memcached protocol to
 speed up builds
