@@ -1,18 +1,16 @@
 # WebHare as a docker
-FROM       fedora:25
+FROM       fedora:31
 
-RUN (curl --silent --location https://rpm.nodesource.com/setup_8.x | bash - ) && \
-  (curl --silent https://dl.yarnpkg.com/rpm/yarn.repo -o /etc/yum.repos.d/yarn.repo ) && \
-  dnf install -y nodejs yarn && \
-  dnf upgrade -y && \
+RUN dnf install -y --setopt=install_weak_deps=False nodejs && \
+  dnf upgrade -y --setopt=install_weak_deps=False && \
   dnf clean all && \
   rm -rf /var/cache/dnf/
 
 EXPOSE 11211
 CMD node /opt/server/index.js
 
-COPY package.json yarn.lock /opt/server/
-RUN cd /opt/server && yarn install && yarn cache clean
+COPY package.json package-lock.json /opt/server/
+RUN cd /opt/server && npm install && npm cache clean --force
 
 COPY src/*.js /opt/server/
 RUN mkdir -p /opt/memcache-data

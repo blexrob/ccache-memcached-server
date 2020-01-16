@@ -2,6 +2,7 @@ const sqlite3 = require('sqlite3').verbose();
 const co = require('co');
 const net = require('net');
 const fs = require('fs');
+const filesizeParser = require('filesize-parser');
 
 
 /** This class implements the base class for a waitable condition
@@ -324,13 +325,14 @@ function runSQLiteCmd(call)
 
 class SQLCache extends Cache
 {
-  constructor()
+  constructor(cachesize)
   {
     super();
     this.db = new sqlite3.Database("/opt/memcache-data/files.db");
     console.log(this.db);
     this.cleans = 1;
     this.runningclean = false;
+    this.cachesize = cachesize;
 
     this.lastelts = 0;
     this.lastsize = 0;
@@ -446,7 +448,6 @@ class SQLCache extends Cache
         return;
       }
 
-      let maxlen = 10 * 1000 * 1000 * 1000; // about 10 GB
       let totallen = 0;
       let removelen = 0;
       let removecount = 0;
@@ -454,7 +455,7 @@ class SQLCache extends Cache
       for (let row of res.rows)
       {
         totallen += row.len;
-        if (totallen > maxlen && !lastuse)
+        if (totallen > this.cachesize && !lastuse)
           lastuse = row.lastuse;
         if (lastuse)
         {
@@ -503,12 +504,13 @@ Retrieved: ${(this._retrieved / 1024 / 1024).toFixed(1)} MB
 
 class FileDB extends Cache
 {
-  constructor()
+  constructor(cachesize)
   {
     super();
 
     this.cleans = 1;
     this.runningclean = false;
+    this.cachesize = cachesize;
   }
 
   async init()
@@ -644,7 +646,6 @@ class FileDB extends Cache
       return;
     }
 
-    let maxlen = 10 * 1000 * 1000 * 1000; // about 10 GB
     let totallen = 0;
     let removelen = 0;
     let removecount = 0;
@@ -652,7 +653,7 @@ class FileDB extends Cache
     for (let row of lru_sorted)
     {
       totallen += row[1].len;
-      if (totallen > maxlen && !lastuse)
+      if (totallen > this.cachesize && !lastuse)
         lastuse = row[1].lastuse;
       if (lastuse)
       {
@@ -771,10 +772,12 @@ class AsyncStoreWrapper extends Cache
   }
 }
 
+cachesize = filesizeParser(process.env.CACHESIZE || "10GB");
 
 let server;
-let cache = new AsyncStoreWrapper(new FileDB);
+let cache = new AsyncStoreWrapper(new FileDB(cachesize));
 
+console.log(`Cache size is ${(cachesize / 1024 / 1024).toFixed(1)} MB`);
 console.log("initializing...");
 try
 {
