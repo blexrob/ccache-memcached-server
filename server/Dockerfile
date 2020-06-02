@@ -1,7 +1,7 @@
 # WebHare as a docker
 FROM       fedora:31
 
-RUN dnf install -y --setopt=install_weak_deps=False nodejs && \
+RUN dnf install -y --setopt=install_weak_deps=False nodejs npm && \
   dnf upgrade -y --setopt=install_weak_deps=False && \
   dnf clean all && \
   rm -rf /var/cache/dnf/
